@@ -55,6 +55,19 @@ The Pages Functions handler imports the Hono app directly, enabling single-deplo
 
 ### Frontend Structure
 
-- `src/pages/ImageGenerator.tsx` - Main page component
+- `src/pages/ImageGenerator.tsx` - Main page with single image generation
+- `src/pages/FlowPage.tsx` - Visual canvas for batch generation using React Flow
+- `src/hooks/useImageGenerator.ts` - Core state management and API calls
 - `src/components/ui/` - shadcn/ui components
+- `src/components/feature/` - Feature-specific components (PromptCard, ImageResultCard, etc.)
+- `src/components/flow/` - React Flow nodes and layout utilities
 - `src/lib/crypto.ts` - AES-256-GCM encryption for API key storage
+- `src/lib/constants.ts` - Settings persistence and default values
+- `src/lib/flow-storage.ts` - IndexedDB storage for Flow mode state
+
+### Frontend Patterns
+
+- Uses `@/` path alias for imports (maps to `src/`)
+- Settings and API keys are persisted to localStorage (encrypted)
+- Flow mode persists nodes/edges/images to IndexedDB
+- API URL configured via `VITE_API_URL` env var (defaults to relative path for same-origin deployment)
