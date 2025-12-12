@@ -148,6 +148,19 @@ netlify deploy --prod
 
 将 API 单独部署到 Cloudflare Workers。
 
+### 方式 1：通过 Dashboard（推荐）
+
+1. 登录 [Cloudflare Dashboard](https://dash.cloudflare.com)
+2. 进入 **Workers & Pages** > **Create** > **Worker** > **Import from Git**
+3. 连接 GitHub 仓库
+4. 配置构建设置：
+   - **Build command**: `pnpm build:shared && pnpm build:api`
+   - **Deploy command**: `npx wrangler deploy`
+   - **Root directory**: `apps/api`
+5. 非生产分支部署命令（可选）：`npx wrangler versions upload`
+
+### 方式 2：通过 CLI
+
 ```bash
 cd apps/api
 
