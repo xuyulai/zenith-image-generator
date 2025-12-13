@@ -58,11 +58,17 @@ export function validateScale(scale: number): ValidationResult {
   return { valid: true }
 }
 
-/** Allowed image host whitelist */
+/** Allowed image host whitelist - based on HF_SPACES and provider configs */
 const ALLOWED_IMAGE_HOSTS = [
-  'luca115-z-image-turbo.hf.space',
+  // HuggingFace Spaces (from HF_SPACES in providers.ts)
+  'mrfakename-z-image-turbo.hf.space',
   'mcp-tools-qwen-image-fast.hf.space',
+  'aidc-ai-ovis-image-7b.hf.space',
+  'black-forest-labs-flux-1-schnell.hf.space',
   'tuan2308-upscaler.hf.space',
+  // Gitee AI image storage
+  'aliyuncs.com', // Aliyun OSS
+  'bcebos.com', // Baidu Cloud
 ]
 
 /** Check if image URL is in whitelist */

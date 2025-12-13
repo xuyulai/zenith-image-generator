@@ -58,6 +58,8 @@ jobs:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           command: pages deploy apps/web/dist --project-name=zenith-image-generator --branch=${{ github.head_ref }}
+          packageManager: pnpm
+          wranglerVersion: "4"
 
       - name: Comment Preview URL
         uses: actions/github-script@v8

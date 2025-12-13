@@ -1,8 +1,39 @@
 import { type ClassValue, clsx } from 'clsx'
+import JSZip from 'jszip'
 import { twMerge } from 'tailwind-merge'
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
+}
+
+/**
+ * Get API URL for proxy endpoint
+ */
+function getApiUrl(): string {
+  return import.meta.env.VITE_API_URL || ''
+}
+
+/**
+ * Check if URL needs to be proxied (external URLs that may have CORS issues)
+ */
+function needsProxy(url: string): boolean {
+  if (!url.startsWith('http')) return false
+  try {
+    const parsed = new URL(url)
+    // External URLs that are not same-origin need proxy
+    return parsed.origin !== window.location.origin
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Get proxied URL for external images
+ */
+function getProxiedUrl(url: string): string {
+  if (!needsProxy(url)) return url
+  const apiUrl = getApiUrl()
+  return `${apiUrl}/api/proxy-image?url=${encodeURIComponent(url)}`
 }
 
 /**
@@ -81,4 +112,119 @@ export async function downloadImage(
     a.download = filename
     a.click()
   }
+}
+
+/**
+ * Convert image URL or base64 data URL to PNG blob
+ * Uses proxy for external URLs to avoid CORS issues
+ */
+async function convertToPngBlob(url: string): Promise<Blob> {
+  let blob: Blob
+
+  // Handle base64 data URLs directly
+  if (url.startsWith('data:')) {
+    const response = await fetch(url)
+    blob = await response.blob()
+  } else {
+    // Use proxy for external URLs
+    const fetchUrl = getProxiedUrl(url)
+    const response = await fetch(fetchUrl)
+    blob = await response.blob()
+  }
+
+  // If already PNG, return as-is
+  if (blob.type === 'image/png') {
+    return blob
+  }
+
+  // Convert to PNG using canvas
+  return new Promise((resolve, reject) => {
+    const img = new Image()
+    img.crossOrigin = 'anonymous'
+
+    img.onload = () => {
+      const canvas = document.createElement('canvas')
+      canvas.width = img.naturalWidth
+      canvas.height = img.naturalHeight
+      const ctx = canvas.getContext('2d')
+      if (!ctx) {
+        reject(new Error('Failed to get canvas context'))
+        return
+      }
+      ctx.drawImage(img, 0, 0)
+
+      canvas.toBlob(
+        (pngBlob) => {
+          if (!pngBlob) {
+            reject(new Error('Failed to convert to PNG'))
+            return
+          }
+          resolve(pngBlob)
+        },
+        'image/png',
+        1.0
+      )
+    }
+
+    img.onerror = () => reject(new Error('Failed to load image'))
+    img.src = URL.createObjectURL(blob)
+  })
+}
+
+/**
+ * Download multiple images as a zip file
+ * Converts webp images to PNG format
+ */
+export async function downloadImagesAsZip(
+  images: Array<{ url: string; filename: string }>,
+  zipFilename: string,
+  onProgress?: (current: number, total: number) => void
+): Promise<void> {
+  const zip = new JSZip()
+  const imagesFolder = zip.folder('images')
+
+  if (!imagesFolder) {
+    throw new Error('Failed to create zip folder')
+  }
+
+  for (let i = 0; i < images.length; i++) {
+    const { url, filename } = images[i]
+    onProgress?.(i + 1, images.length)
+
+    try {
+      // Convert to PNG blob
+      const pngBlob = await convertToPngBlob(url)
+      // Ensure filename ends with .png
+      const pngFilename = filename.replace(/\.(webp|jpg|jpeg)$/i, '.png')
+      imagesFolder.file(pngFilename, pngBlob)
+    } catch (error) {
+      console.error(`Failed to process image ${filename}:`, error)
+      // Try to add original image as fallback
+      try {
+        let blob: Blob
+        if (url.startsWith('data:')) {
+          // Handle base64 data URLs
+          const response = await fetch(url)
+          blob = await response.blob()
+        } else {
+          // Use proxy for external URLs
+          const fetchUrl = getProxiedUrl(url)
+          const response = await fetch(fetchUrl)
+          blob = await response.blob()
+        }
+        imagesFolder.file(filename, blob)
+      } catch {
+        console.error(`Failed to add image ${filename} to zip`)
+      }
+    }
+  }
+
+  // Generate zip and download
+  const content = await zip.generateAsync({ type: 'blob' })
+  const blobUrl = URL.createObjectURL(content)
+  const a = document.createElement('a')
+  a.href = blobUrl
+  a.download = zipFilename
+  a.click()
+  URL.revokeObjectURL(blobUrl)
 }

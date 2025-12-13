@@ -44,3 +44,5 @@ jobs:
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: apps/api
           command: deploy
+          packageManager: pnpm
+          wranglerVersion: "4"
