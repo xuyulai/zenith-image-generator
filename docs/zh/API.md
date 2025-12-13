@@ -15,7 +15,9 @@
 
 ```json
 {
-  "message": "Z-Image API is running"
+  "status": "ok",
+  "message": "Z-Image API is running",
+  "timestamp": "2025-01-01T00:00:00.000Z"
 }
 ```
 
@@ -121,15 +123,48 @@ X-MS-Token: your-modelscope-token     # ModelScope (可选)
 }
 ```
 
-**响应：**
+**响应（成功）：**
 
 ```json
 {
-  "url": "https://...",
-  "b64_json": "base64-encoded-image-data",
-  "seed": 12345
+  "imageDetails": {
+    "url": "https://example.com/generated-image.png",
+    "provider": "Gitee AI",
+    "model": "Z-Image Turbo",
+    "dimensions": "1024 x 1024 (1:1)",
+    "duration": "5.2s",
+    "seed": 12345,
+    "steps": 9,
+    "prompt": "A beautiful sunset over mountains",
+    "negativePrompt": "low quality, blurry"
+  }
 }
 ```
+
+**响应（错误）：**
+
+```json
+{
+  "error": "Invalid prompt",
+  "code": "INVALID_PROMPT",
+  "details": {
+    "field": "prompt"
+  }
+}
+```
+
+**错误码：**
+
+| 错误码 | HTTP 状态码 | 描述 |
+|--------|-------------|------|
+| `AUTH_REQUIRED` | 401 | 需要 API Token |
+| `AUTH_INVALID` | 401 | 无效的 API Token |
+| `RATE_LIMITED` | 429 | 请求过于频繁 |
+| `QUOTA_EXCEEDED` | 429 | API 配额已用尽 |
+| `INVALID_PROMPT` | 400 | 无效的提示词 |
+| `INVALID_DIMENSIONS` | 400 | 无效的宽度/高度 |
+| `PROVIDER_ERROR` | 502 | 上游服务错误 |
+| `TIMEOUT` | 504 | 请求超时 |
 
 **参数：**
 
@@ -231,7 +266,7 @@ const response = await fetch('https://your-project.pages.dev/api/generate', {
 });
 
 const data = await response.json();
-console.log(data.url || `data:image/png;base64,${data.b64_json}`);
+console.log(data.imageDetails.url);
 ```
 
 ### Python
@@ -254,7 +289,7 @@ response = requests.post(
 )
 
 data = response.json()
-print(data.get('url') or data.get('b64_json'))
+print(data['imageDetails']['url'])
 ```
 
 ## 支持的宽高比

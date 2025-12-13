@@ -52,7 +52,37 @@ Access via `http://localhost:5173`
 
 Navigate to `http://localhost:5173`
 
-### 6. LAN Access (Optional)
+### 6. Running Tests
+
+The project uses Vitest for testing both API and frontend code.
+
+```bash
+# Run all tests in watch mode
+pnpm test
+
+# Run tests once (CI mode)
+pnpm test:run
+
+# Run tests with coverage report
+pnpm test:coverage
+```
+
+**Test Structure:**
+
+- `apps/api/src/__tests__/` - API route integration tests
+- `apps/api/src/providers/__tests__/` - Provider unit tests (mocked fetch)
+- `apps/api/src/middleware/__tests__/` - Middleware tests
+- `apps/api/src/utils/__tests__/` - Utility function tests
+- `apps/web/src/lib/__tests__/` - Frontend library tests
+
+**Writing Tests:**
+
+- All external API calls are mocked - no real API quota needed
+- Use `vi.stubGlobal('fetch', vi.fn())` to mock fetch
+- Frontend tests require `@vitest-environment jsdom` directive
+- Run tests before submitting PRs
+
+### 7. LAN Access (Optional)
 
 If you want to access the dev server from other devices on your local network (e.g., testing on mobile):
 
@@ -92,3 +122,80 @@ pnpm dev:web -- --host=0.0.0.0
 4. **Access from other devices**: `http://192.168.1.9:5173`
 
 > **Tip**: Find your LAN IP with `ip addr` (Linux) or `ipconfig` (Windows)
+
+### 8. Submitting a Pull Request
+
+Before submitting a PR, run these checks locally:
+
+```bash
+# 1. Lint and format check
+pnpm check
+
+# 2. Run tests
+pnpm test:run
+
+# 3. Build to verify no errors
+pnpm build
+```
+
+**CI Pipeline:**
+
+All PRs automatically run through GitHub Actions CI which includes:
+- Lint & format check (`pnpm check`)
+- Type check (`tsc --noEmit`)
+- Build all packages
+- Run all tests
+
+PRs cannot be merged until CI passes. Running checks locally saves time and CI minutes.
+
+**PR Guidelines:**
+- Create feature branches from `dev`
+- Follow commit message conventions (see below)
+- Update documentation if adding new features
+- Add tests for new functionality
+
+### 9. Commit Message Convention
+
+This project follows [Conventional Commits](https://www.conventionalcommits.org/). Format:
+
+```
+<type>(<scope>): <description>
+
+[optional body]
+```
+
+**Types:**
+
+| Type | Description |
+|------|-------------|
+| `feat` | New feature |
+| `fix` | Bug fix |
+| `docs` | Documentation only |
+| `style` | Code style (formatting, no logic change) |
+| `refactor` | Code refactoring |
+| `test` | Adding or updating tests |
+| `chore` | Build, CI, dependencies |
+| `perf` | Performance improvement |
+
+**Scopes:**
+
+| Scope | Description |
+|-------|-------------|
+| `api` | Backend API (`apps/api`) |
+| `web` | Frontend (`apps/web`) |
+| `shared` | Shared package (`packages/shared`) |
+| `ci` | GitHub Actions workflows |
+| `deps` | Dependencies |
+
+**Examples:**
+
+```bash
+feat(api): add ModelScope provider support
+fix(web): resolve image download on Safari
+docs: update API reference with new endpoints
+test(api): add provider unit tests
+refactor(shared): extract validation utilities
+chore(deps): upgrade vitest to v4.0
+```
+
+**PR Title:** Use the same format as commit messages.

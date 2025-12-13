@@ -15,7 +15,9 @@ Health check endpoint.
 
 ```json
 {
-  "message": "Z-Image API is running"
+  "status": "ok",
+  "message": "Z-Image API is running",
+  "timestamp": "2025-01-01T00:00:00.000Z"
 }
 ```
 
@@ -121,15 +123,48 @@ X-MS-Token: your-modelscope-token     # ModelScope (optional)
 }
 ```
 
-**Response:**
+**Response (Success):**
 
 ```json
 {
-  "url": "https://...",
-  "b64_json": "base64-encoded-image-data",
-  "seed": 12345
+  "imageDetails": {
+    "url": "https://example.com/generated-image.png",
+    "provider": "Gitee AI",
+    "model": "Z-Image Turbo",
+    "dimensions": "1024 x 1024 (1:1)",
+    "duration": "5.2s",
+    "seed": 12345,
+    "steps": 9,
+    "prompt": "A beautiful sunset over mountains",
+    "negativePrompt": "low quality, blurry"
+  }
 }
 ```
+
+**Response (Error):**
+
+```json
+{
+  "error": "Invalid prompt",
+  "code": "INVALID_PROMPT",
+  "details": {
+    "field": "prompt"
+  }
+}
+```
+
+**Error Codes:**
+
+| Code | HTTP Status | Description |
+|------|-------------|-------------|
+| `AUTH_REQUIRED` | 401 | API token is required |
+| `AUTH_INVALID` | 401 | Invalid API token |
+| `RATE_LIMITED` | 429 | Too many requests |
+| `QUOTA_EXCEEDED` | 429 | API quota exceeded |
+| `INVALID_PROMPT` | 400 | Invalid prompt |
+| `INVALID_DIMENSIONS` | 400 | Invalid width/height |
+| `PROVIDER_ERROR` | 502 | Upstream provider error |
+| `TIMEOUT` | 504 | Request timed out |
 
 **Parameters:**
 
@@ -231,7 +266,7 @@ const response = await fetch('https://your-project.pages.dev/api/generate', {
 });
 
 const data = await response.json();
-console.log(data.url || `data:image/png;base64,${data.b64_json}`);
+console.log(data.imageDetails.url);
 ```
 
 ### Python
@@ -254,7 +289,7 @@ response = requests.post(
 )
 
 data = response.json()
-print(data.get('url') or data.get('b64_json'))
+print(data['imageDetails']['url'])
 ```
 
 ## Supported Aspect Ratios

@@ -17,7 +17,7 @@
     "build:web": "turbo run build --filter=@z-image/web",
     "build:api": "turbo run build --filter=@z-image/api",
     "build:shared": "turbo run build --filter=@z-image/shared",
-    "deploy:cf-pages": "pnpm build:web && cd apps/web && wrangler pages deploy dist --project-name=z-image",
+    "deploy:cf-pages": "pnpm build:web && cd apps/web && wrangler pages deploy dist --project-name=zenith-image-generator",
     "deploy:cf-workers": "cd apps/api && wrangler deploy",
     "deploy:vercel": "vercel --prod",
     "deploy:netlify": "netlify deploy --prod --dir=apps/web/dist",
@@ -32,9 +32,10 @@
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.4",
-    "@vitest/coverage-v8": "^2.1.8",
+    "@vitest/coverage-v8": "^4.0.15",
     "turbo": "^2.3.3",
     "typescript": "^5.7.2",
-    "vitest": "^2.1.8"
+    "vitest": "^4.0.15",
+    "wrangler": "^3.90.0"
   }
 }

@@ -6,15 +6,16 @@
  */
 
 import {
+  Errors,
   type GenerateRequest,
   type GenerateSuccessResponse,
-  type ImageDetails,
   HF_SPACES,
+  type ImageDetails,
   MODEL_CONFIGS,
   PROVIDER_CONFIGS,
   type ProviderType,
-  getModelsByProvider,
   getModelByProviderAndId,
+  getModelsByProvider,
   isAllowedImageUrl,
   validateDimensions,
   validatePrompt,
@@ -23,64 +24,18 @@ import {
 } from '@z-image/shared'
 import { Hono } from 'hono'
 import { cors } from 'hono/cors'
+import {
+  bodyLimit,
+  errorHandler,
+  notFoundHandler,
+  requestId,
+  requestLogger,
+  securityHeaders,
+  sendError,
+  timeout,
+} from './middleware'
 import { getProvider, hasProvider } from './providers'
-
-/** Extract complete event data from SSE stream */
-function extractCompleteEventData(sseStream: string): unknown {
-  const lines = sseStream.split('\n')
-  let currentEvent = ''
-
-  for (const line of lines) {
-    if (line.startsWith('event:')) {
-      currentEvent = line.substring(6).trim()
-    } else if (line.startsWith('data:')) {
-      const jsonData = line.substring(5).trim()
-      if (currentEvent === 'complete') {
-        return JSON.parse(jsonData)
-      }
-      if (currentEvent === 'error') {
-        // Parse actual error message from data
-        try {
-          const errorData = JSON.parse(jsonData)
-          const errorMsg =
-            errorData?.error || errorData?.message || JSON.stringify(errorData) || 'Unknown error'
-          throw new Error(errorMsg)
-        } catch (e) {
-          if (e instanceof SyntaxError) {
-            throw new Error(jsonData || 'Unknown SSE error')
-          }
-          throw e
-        }
-      }
-    }
-  }
-  // No complete/error event found, show raw response for debugging
-  throw new Error(`Unexpected SSE response: ${sseStream.substring(0, 300)}`)
-}
-
-/** Call Gradio API for upscaling */
-async function callGradioApi(baseUrl: string, endpoint: string, data: unknown[], hfToken?: string) {
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' }
-  if (hfToken) headers.Authorization = `Bearer ${hfToken}`
-
-  const queue = await fetch(`${baseUrl}/gradio_api/call/${endpoint}`, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({ data }),
-  })
-
-  if (!queue.ok) throw new Error(`Queue request failed: ${queue.status}`)
-
-  const queueData = (await queue.json()) as { event_id?: string }
-  if (!queueData.event_id) throw new Error('No event_id returned')
-
-  const result = await fetch(`${baseUrl}/gradio_api/call/${endpoint}/${queueData.event_id}`, {
-    headers,
-  })
-  const text = await result.text()
-
-  return extractCompleteEventData(text) as unknown[]
-}
+import { callGradioApi, formatDimensions, formatDuration } from './utils'
 
 export interface AppConfig {
   corsOrigins?: string[]
@@ -93,18 +48,40 @@ export function createApp(config: AppConfig = {}) {
   const defaultOrigins = ['http://localhost:5173', 'http://localhost:3000']
   const origins = config.corsOrigins || defaultOrigins
 
-  // CORS middleware
-  app.use('/*', async (c, next) => {
-    return cors({
-      origin: origins,
-      allowMethods: ['GET', 'POST', 'OPTIONS'],
-      allowHeaders: ['Content-Type', 'X-API-Key', 'X-HF-Token', 'X-MS-Token'],
-    })(c, next)
+  // Pre-create CORS middleware instance (optimization)
+  const corsMiddleware = cors({
+    origin: origins,
+    allowMethods: ['GET', 'POST', 'OPTIONS'],
+    allowHeaders: ['Content-Type', 'X-API-Key', 'X-HF-Token', 'X-MS-Token', 'X-Request-ID'],
   })
+
+  // Global error handlers
+  app.onError(errorHandler)
+  app.notFound(notFoundHandler)
+
+  // Apply middleware in correct order
+  app.use('/*', requestId) // Request ID first for logging
+  app.use('/*', corsMiddleware)
+  app.use('/*', securityHeaders)
+  app.use('/*', requestLogger)
+
+  // Apply timeout to all generation endpoints (120 seconds)
+  app.use('/generate', timeout(120000))
+  app.use('/generate-hf', timeout(120000))
+  app.use('/upscale', timeout(120000))
+
+  // Apply body limit (50KB for most endpoints)
+  app.use('/generate', bodyLimit(50 * 1024))
+  app.use('/generate-hf', bodyLimit(50 * 1024))
+  app.use('/upscale', bodyLimit(50 * 1024))
 
   // Health check
   app.get('/', (c) => {
-    return c.json({ message: 'Z-Image API is running' })
+    return c.json({
+      status: 'ok',
+      message: 'Z-Image API is running',
+      timestamp: new Date().toISOString(),
+    })
   })
 
   // Get all providers
@@ -149,34 +126,28 @@ export function createApp(config: AppConfig = {}) {
     try {
       body = await c.req.json()
     } catch {
-      return c.json({ error: 'Invalid JSON body' }, 400)
+      return sendError(c, Errors.invalidParams('body', 'Invalid JSON body'))
     }
 
     // Determine provider (default to gitee for backward compatibility)
     const providerId = body.provider || 'gitee'
     if (!hasProvider(providerId)) {
-      return c.json({ error: `Invalid provider: ${providerId}` }, 400)
+      return sendError(c, Errors.invalidProvider(providerId))
     }
 
     // Get auth token based on provider
     const providerConfig = PROVIDER_CONFIGS[providerId]
     const authToken = c.req.header(providerConfig?.authHeader || 'X-API-Key')
 
-    // Debug: log token info (uncomment for debugging)
-    // console.log(`[${providerId}] Auth header: ${providerConfig?.authHeader}, Token present: ${!!authToken}, Token length: ${authToken?.length || 0}`)
-
     // Check auth requirement
     if (providerConfig?.requiresAuth && !authToken) {
-      return c.json(
-        { error: `${providerConfig.authHeader} is required for ${providerConfig.name}` },
-        401
-      )
+      return sendError(c, Errors.authRequired(providerConfig.name))
     }
 
     // Validate prompt
     const promptValidation = validatePrompt(body.prompt)
     if (!promptValidation.valid) {
-      return c.json({ error: promptValidation.error }, 400)
+      return sendError(c, Errors.invalidPrompt(promptValidation.error || 'Invalid prompt'))
     }
 
     // Validate dimensions
@@ -184,14 +155,17 @@ export function createApp(config: AppConfig = {}) {
     const height = body.height ?? 1024
     const dimensionsValidation = validateDimensions(width, height)
     if (!dimensionsValidation.valid) {
-      return c.json({ error: dimensionsValidation.error }, 400)
+      return sendError(
+        c,
+        Errors.invalidDimensions(dimensionsValidation.error || 'Invalid dimensions')
+      )
     }
 
     // Validate steps
     const steps = body.steps ?? body.num_inference_steps ?? 9
     const stepsValidation = validateSteps(steps)
     if (!stepsValidation.valid) {
-      return c.json({ error: stepsValidation.error }, 400)
+      return sendError(c, Errors.invalidParams('steps', stepsValidation.error || 'Invalid steps'))
     }
 
     try {
@@ -215,22 +189,12 @@ export function createApp(config: AppConfig = {}) {
       const modelName = modelConfig?.name || body.model
       const providerName = providerConfig?.name || providerId
 
-      // Build dimensions string with aspect ratio
-      const gcd = (a: number, b: number): number => (b === 0 ? a : gcd(b, a % b))
-      const divisor = gcd(width, height)
-      const ratioW = width / divisor
-      const ratioH = height / divisor
-      const dimensions = `${width} x ${height} (${ratioW}:${ratioH})`
-
-      // Format duration
-      const durationStr = duration >= 1000 ? `${(duration / 1000).toFixed(1)}s` : `${duration}ms`
-
       const imageDetails: ImageDetails = {
         url: result.url,
         provider: providerName,
         model: modelName,
-        dimensions,
-        duration: durationStr,
+        dimensions: formatDimensions(width, height),
+        duration: formatDuration(duration),
         seed: result.seed,
         steps,
         prompt: body.prompt,
@@ -240,25 +204,30 @@ export function createApp(config: AppConfig = {}) {
       const response: GenerateSuccessResponse = { imageDetails }
       return c.json(response)
     } catch (err) {
-      console.error(`${providerId} Error:`, err)
-      const message = err instanceof Error ? err.message : 'Image generation failed'
-      return c.json({ error: message }, 500)
+      return sendError(c, err)
     }
   })
 
   // Legacy HuggingFace endpoint (for backward compatibility)
   app.post('/generate-hf', async (c) => {
-    let body: { prompt: string; width?: number; height?: number; model?: string; seed?: number; steps?: number }
+    let body: {
+      prompt: string
+      width?: number
+      height?: number
+      model?: string
+      seed?: number
+      steps?: number
+    }
     try {
       body = await c.req.json()
     } catch {
-      return c.json({ error: 'Invalid JSON body' }, 400)
+      return sendError(c, Errors.invalidParams('body', 'Invalid JSON body'))
     }
 
     // Validate prompt
     const promptValidation = validatePrompt(body.prompt)
     if (!promptValidation.valid) {
-      return c.json({ error: promptValidation.error }, 400)
+      return sendError(c, Errors.invalidPrompt(promptValidation.error || 'Invalid prompt'))
     }
 
     const hfToken = c.req.header('X-HF-Token')
@@ -269,7 +238,10 @@ export function createApp(config: AppConfig = {}) {
 
     const dimensionsValidation = validateDimensions(width, height)
     if (!dimensionsValidation.valid) {
-      return c.json({ error: dimensionsValidation.error }, 400)
+      return sendError(
+        c,
+        Errors.invalidDimensions(dimensionsValidation.error || 'Invalid dimensions')
+      )
     }
 
     try {
@@ -290,22 +262,12 @@ export function createApp(config: AppConfig = {}) {
       const modelConfig = getModelByProviderAndId('huggingface', modelId)
       const modelName = modelConfig?.name || modelId
 
-      // Build dimensions string with aspect ratio
-      const gcd = (a: number, b: number): number => (b === 0 ? a : gcd(b, a % b))
-      const divisor = gcd(width, height)
-      const ratioW = width / divisor
-      const ratioH = height / divisor
-      const dimensions = `${width} x ${height} (${ratioW}:${ratioH})`
-
-      // Format duration
-      const durationStr = duration >= 1000 ? `${(duration / 1000).toFixed(1)}s` : `${duration}ms`
-
       const imageDetails: ImageDetails = {
         url: result.url,
         provider: 'HuggingFace',
         model: modelName,
-        dimensions,
-        duration: durationStr,
+        dimensions: formatDimensions(width, height),
+        duration: formatDuration(duration),
         seed: result.seed,
         steps,
         prompt: body.prompt,
@@ -315,7 +277,7 @@ export function createApp(config: AppConfig = {}) {
       const response: GenerateSuccessResponse = { imageDetails }
       return c.json(response)
     } catch (err) {
-      return c.json({ error: err instanceof Error ? err.message : 'Generation failed' }, 500)
+      return sendError(c, err)
     }
   })
 
@@ -325,15 +287,15 @@ export function createApp(config: AppConfig = {}) {
     try {
       body = await c.req.json()
     } catch {
-      return c.json({ error: 'Invalid JSON body' }, 400)
+      return sendError(c, Errors.invalidParams('body', 'Invalid JSON body'))
     }
 
     if (!body.url || typeof body.url !== 'string') {
-      return c.json({ error: 'url is required' }, 400)
+      return sendError(c, Errors.invalidParams('url', 'url is required'))
     }
 
     if (!isAllowedImageUrl(body.url)) {
-      return c.json({ error: 'URL not allowed' }, 400)
+      return sendError(c, Errors.invalidParams('url', 'URL not allowed'))
     }
 
     const hfToken = c.req.header('X-HF-Token')
@@ -341,7 +303,7 @@ export function createApp(config: AppConfig = {}) {
 
     const scaleValidation = validateScale(scale)
     if (!scaleValidation.valid) {
-      return c.json({ error: scaleValidation.error }, 400)
+      return sendError(c, Errors.invalidParams('scale', scaleValidation.error || 'Invalid scale'))
     }
 
     try {
@@ -359,10 +321,12 @@ export function createApp(config: AppConfig = {}) {
       )
       const result = data as Array<{ url?: string }>
       const imageUrl = result[0]?.url
-      if (!imageUrl) return c.json({ error: 'No image returned' }, 500)
+      if (!imageUrl) {
+        return sendError(c, Errors.generationFailed('HuggingFace Upscaler', 'No image returned'))
+      }
       return c.json({ url: imageUrl })
     } catch (err) {
-      return c.json({ error: err instanceof Error ? err.message : 'Upscale failed' }, 500)
+      return sendError(c, err)
     }
   })
 

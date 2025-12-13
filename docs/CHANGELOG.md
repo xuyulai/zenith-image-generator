@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.5.1] - 2025-12-13
+
+### Added
+- Comprehensive test suite with Vitest (162 tests across 9 files)
+  - API route integration tests
+  - Provider unit tests with mocked fetch
+  - Error handling middleware tests
+  - Frontend utility tests (api, utils, constants)
+- Testing documentation in CONTRIBUTING.md
+
+### Changed
+- API middleware layer refactoring with extracted utilities
+- Unified error handling system with structured error codes
+- HuggingFace images now convert to PNG on download
+- Unified API response structure with imageDetails
+
+### Fixed
+- HuggingFace provider configuration
+
 ## [0.5.0] - 2025-12-12
 
 ### Added

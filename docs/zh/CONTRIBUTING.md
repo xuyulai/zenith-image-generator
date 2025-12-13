@@ -52,7 +52,37 @@ pnpm dev:web
 
 访问 `http://localhost:5173`
 
-### 6. 局域网访问（可选）
+### 6. 运行测试
+
+项目使用 Vitest 进行 API 和前端代码的测试。
+
+```bash
+# 以监听模式运行所有测试
+pnpm test
+
+# 运行一次测试（CI 模式）
+pnpm test:run
+
+# 运行测试并生成覆盖率报告
+pnpm test:coverage
+```
+
+**测试结构：**
+
+- `apps/api/src/__tests__/` - API 路由集成测试
+- `apps/api/src/providers/__tests__/` - Provider 单元测试（模拟 fetch）
+- `apps/api/src/middleware/__tests__/` - 中间件测试
+- `apps/api/src/utils/__tests__/` - 工具函数测试
+- `apps/web/src/lib/__tests__/` - 前端库测试
+
+**编写测试：**
+
+- 所有外部 API 调用都是模拟的 - 无需真实 API 额度
+- 使用 `vi.stubGlobal('fetch', vi.fn())` 模拟 fetch
+- 前端测试需要 `@vitest-environment jsdom` 指令
+- 提交 PR 前请运行测试
+
+### 7. 局域网访问（可选）
 
 如果你想从本地网络中的其他设备访问开发服务器（例如在手机上进行测试）：
 
@@ -92,3 +122,80 @@ pnpm dev:web -- --host=0.0.0.0
 4. **从其他设备访问**：`http://192.168.1.9:5173`
 
 > **提示**：你可以通过 `ip addr` (Linux) 或 `ipconfig` (Windows) 命令查看你的局域网 IP
+
+### 8. 提交 Pull Request
+
+提交 PR 前，请在本地运行以下检查：
+
+```bash
+# 1. Lint 和格式检查
+pnpm check
+
+# 2. 运行测试
+pnpm test:run
+
+# 3. 构建验证无错误
+pnpm build
+```
+
+**CI 流水线：**
+
+所有 PR 会自动通过 GitHub Actions CI 检查，包括：
+- Lint 和格式检查 (`pnpm check`)
+- 类型检查 (`tsc --noEmit`)
+- 构建所有包
+- 运行所有测试
+
+CI 未通过的 PR 无法合并。在本地运行检查可以节省时间和 CI 资源。
+
+**PR 规范：**
+- 从 `dev` 分支创建功能分支
+- 遵循提交信息规范（见下方）
+- 添加新功能时更新相关文档
+- 为新功能编写测试
+
+### 9. 提交信息规范
+
+本项目遵循 [Conventional Commits](https://www.conventionalcommits.org/zh-hans/) 规范。格式：
+
+```
+<类型>(<范围>): <描述>
+
+[可选正文]
+```
+
+**类型：**
+
+| 类型 | 描述 |
+|------|-------------|
+| `feat` | 新功能 |
+| `fix` | Bug 修复 |
+| `docs` | 仅文档更新 |
+| `style` | 代码风格（格式化，无逻辑变更） |
+| `refactor` | 代码重构 |
+| `test` | 添加或更新测试 |
+| `chore` | 构建、CI、依赖更新 |
+| `perf` | 性能优化 |
+
+**范围：**
+
+| 范围 | 描述 |
+|-------|-------------|
+| `api` | 后端 API (`apps/api`) |
+| `web` | 前端 (`apps/web`) |
+| `shared` | 共享包 (`packages/shared`) |
+| `ci` | GitHub Actions 工作流 |
+| `deps` | 依赖项 |
+
+**示例：**
+
+```bash
+feat(api): add ModelScope provider support
+fix(web): resolve image download on Safari
+docs: update API reference with new endpoints
+test(api): add provider unit tests
+refactor(shared): extract validation utilities
+chore(deps): upgrade vitest to v4.0
+```
+
+**PR 标题：** 使用与提交信息相同的格式。
