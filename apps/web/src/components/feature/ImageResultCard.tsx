@@ -8,13 +8,12 @@ import {
   ImageIcon,
   Info,
   Loader2,
-  Maximize2,
   Trash2,
   X,
   ZoomIn,
   ZoomOut,
 } from 'lucide-react'
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { ImageComparison } from '@/components/ui/ImageComparison'
@@ -45,7 +44,7 @@ export function ImageResultCard({
   isUpscaling: externalIsUpscaling,
   setShowInfo,
   setIsBlurred,
-  handleUpscale: externalHandleUpscale,
+  handleUpscale: _externalHandleUpscale,
   handleDownload,
   handleDelete,
 }: ImageResultCardProps) {
@@ -53,11 +52,16 @@ export function ImageResultCard({
   const [isComparing, setIsComparing] = useState(false)
   const [tempUpscaledUrl, setTempUpscaledUrl] = useState<string | null>(null)
   const [isUpscalingLocal, setIsUpscalingLocal] = useState(false)
+  const [isUpscaledLocal, setIsUpscaledLocal] = useState(false)
   const [displayUrl, setDisplayUrl] = useState<string | null>(null)
 
   // Fullscreen preview state
   const [isFullscreen, setIsFullscreen] = useState(false)
   const [scale, setScale] = useState(1)
+  const [position, setPosition] = useState({ x: 0, y: 0 })
+  const [isDragging, setIsDragging] = useState(false)
+  const dragStartRef = useRef({ x: 0, y: 0, posX: 0, posY: 0 })
+  const imageContainerRef = useRef<HTMLDivElement>(null)
 
   // Use display URL if set (after applying upscale), otherwise original
   const currentImageUrl = displayUrl || imageDetails?.url
@@ -65,9 +69,19 @@ export function ImageResultCard({
   // Combined upscaling state
   const isUpscaling = externalIsUpscaling || isUpscalingLocal
 
+  // Combined upscaled state (either from parent or local)
+  const isImageUpscaled = isUpscaled || isUpscaledLocal
+
+  // Reset position when scale changes to 1
+  useEffect(() => {
+    if (scale === 1) {
+      setPosition({ x: 0, y: 0 })
+    }
+  }, [scale])
+
   // Handle upscale with comparison
   const handleUpscaleWithCompare = async () => {
-    if (!currentImageUrl || isUpscaling || isUpscaled) return
+    if (!currentImageUrl || isUpscaling || isImageUpscaled) return
 
     setIsUpscalingLocal(true)
     try {
@@ -80,7 +94,7 @@ export function ImageResultCard({
       } else if (!result.success) {
         toast.error(result.error || 'Upscale failed')
       }
-    } catch (err) {
+    } catch (_err) {
       toast.error('Upscale failed')
     } finally {
       setIsUpscalingLocal(false)
@@ -93,11 +107,11 @@ export function ImageResultCard({
       setDisplayUrl(tempUpscaledUrl)
       setTempUpscaledUrl(null)
       setIsComparing(false)
-      // Call external handler to update parent state
-      externalHandleUpscale()
+      // Mark as upscaled locally (don't call parent's handleUpscale to avoid double API call)
+      setIsUpscaledLocal(true)
       toast.success('Upscaled image applied!')
     }
-  }, [tempUpscaledUrl, externalHandleUpscale])
+  }, [tempUpscaledUrl])
 
   // Cancel comparison
   const handleCancelComparison = useCallback(() => {
@@ -116,7 +130,96 @@ export function ImageResultCard({
 
   const handleResetZoom = useCallback(() => {
     setScale(1)
+    setPosition({ x: 0, y: 0 })
   }, [])
+
+  // Close fullscreen
+  const closeFullscreen = useCallback(() => {
+    setIsFullscreen(false)
+    setScale(1)
+    setPosition({ x: 0, y: 0 })
+    // Reset comparison state when closing fullscreen
+    if (isComparing) {
+      setIsComparing(false)
+      setTempUpscaledUrl(null)
+    }
+  }, [isComparing])
+
+  // Mouse wheel zoom handler
+  const handleWheel = useCallback(
+    (e: React.WheelEvent) => {
+      if (isComparing) return // Disable wheel zoom during comparison
+      e.preventDefault()
+      const delta = e.deltaY > 0 ? 0.9 : 1.1
+      setScale((s) => Math.min(Math.max(s * delta, 1), 8))
+    },
+    [isComparing]
+  )
+
+  // Drag handlers for panning
+  const handleMouseDown = useCallback(
+    (e: React.MouseEvent) => {
+      if (scale <= 1 || isComparing) return
+      e.preventDefault()
+      setIsDragging(true)
+      dragStartRef.current = {
+        x: e.clientX,
+        y: e.clientY,
+        posX: position.x,
+        posY: position.y,
+      }
+    },
+    [scale, position, isComparing]
+  )
+
+  const handleMouseMove = useCallback(
+    (e: React.MouseEvent) => {
+      if (!isDragging || scale <= 1) return
+      const dx = e.clientX - dragStartRef.current.x
+      const dy = e.clientY - dragStartRef.current.y
+      setPosition({
+        x: dragStartRef.current.posX + dx,
+        y: dragStartRef.current.posY + dy,
+      })
+    },
+    [isDragging, scale]
+  )
+
+  const handleMouseUp = useCallback(() => {
+    setIsDragging(false)
+  }, [])
+
+  // Double-click handler to open fullscreen
+  const handleDoubleClick = useCallback(() => {
+    if (!currentImageUrl || isComparing) return
+    setIsFullscreen(true)
+  }, [currentImageUrl, isComparing])
+
+  // Keyboard shortcuts for fullscreen mode
+  useEffect(() => {
+    if (!isFullscreen) return
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      switch (e.key) {
+        case 'Escape':
+          closeFullscreen()
+          break
+        case '+':
+        case '=':
+          handleZoomIn()
+          break
+        case '-':
+          handleZoomOut()
+          break
+        case '0':
+          handleResetZoom()
+          break
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [isFullscreen, closeFullscreen, handleZoomIn, handleZoomOut, handleResetZoom])
 
   return (
     <>
@@ -128,143 +231,69 @@ export function ImageResultCard({
           <div className="relative rounded-lg overflow-hidden bg-zinc-900 border border-zinc-800 group">
             {imageDetails ? (
               <>
-                {isComparing && tempUpscaledUrl && currentImageUrl ? (
-                  /* Comparison mode in card */
-                  <div className="relative">
-                    <ImageComparison
-                      beforeImage={currentImageUrl}
-                      afterImage={tempUpscaledUrl}
-                      beforeLabel="Original"
-                      afterLabel="4x Upscaled"
-                      className="w-full"
-                    />
-                  </div>
-                ) : (
-                  /* Normal image display */
-                  <img
-                    src={currentImageUrl || ''}
-                    alt="Generated"
-                    className={`w-full transition-all duration-300 ${isBlurred ? 'blur-xl' : ''}`}
-                  />
-                )}
+                {/* Normal image display with double-click to fullscreen */}
+                <img
+                  src={currentImageUrl || ''}
+                  alt="Generated"
+                  className={`w-full transition-all duration-300 cursor-pointer ${isBlurred ? 'blur-xl' : ''}`}
+                  onDoubleClick={handleDoubleClick}
+                  title="Double-click to view fullscreen"
+                />
 
                 {/* Floating Toolbar */}
                 <div className="absolute bottom-3 left-1/2 -translate-x-1/2 pointer-events-none">
                   <div className="pointer-events-auto flex items-center gap-1 p-1.5 rounded-2xl bg-black/60 backdrop-blur-md border border-white/10 shadow-2xl transition-opacity duration-300 opacity-100 md:opacity-0 md:group-hover:opacity-100">
-                    {isComparing ? (
-                      /* Comparison mode toolbar */
-                      <>
-                        <button
-                          type="button"
-                          onClick={handleCancelComparison}
-                          title="Cancel"
-                          className="flex items-center justify-center w-10 h-10 rounded-xl text-white/70 hover:text-white hover:bg-white/10 transition-all"
-                        >
-                          <X className="w-5 h-5" />
-                        </button>
-                        <div className="w-px h-5 bg-white/10" />
-                        <span className="px-2 text-xs text-white/60">Drag to compare</span>
-                        <div className="w-px h-5 bg-white/10" />
-                        <button
-                          type="button"
-                          onClick={handleConfirmUpscale}
-                          title="Apply upscaled image"
-                          className="flex items-center justify-center w-10 h-10 rounded-xl text-green-400 hover:text-green-300 hover:bg-green-500/10 transition-all"
-                        >
-                          <Check className="w-5 h-5" />
-                        </button>
-                      </>
-                    ) : (
-                      /* Normal mode toolbar */
-                      <>
-                        {/* Info */}
-                        <button
-                          type="button"
-                          onClick={() => setShowInfo(!showInfo)}
-                          title="Details"
-                          className={`flex items-center justify-center w-10 h-10 rounded-xl transition-all ${
-                            showInfo
-                              ? 'bg-orange-600 text-white'
-                              : 'text-white/70 hover:text-white hover:bg-white/10'
-                          }`}
-                        >
-                          <Info className="w-5 h-5" />
-                        </button>
-                        <div className="w-px h-5 bg-white/10" />
-                        {/* Fullscreen */}
-                        <button
-                          type="button"
-                          onClick={() => setIsFullscreen(true)}
-                          title="Fullscreen"
-                          className="flex items-center justify-center w-10 h-10 rounded-xl text-white/70 hover:text-white hover:bg-white/10 transition-all"
-                        >
-                          <Maximize2 className="w-5 h-5" />
-                        </button>
-                        <div className="w-px h-5 bg-white/10" />
-                        {/* 4x Upscale */}
-                        <button
-                          type="button"
-                          onClick={handleUpscaleWithCompare}
-                          disabled={isUpscaling || isUpscaled}
-                          title={
-                            isUpscaling
-                              ? 'Upscaling...'
-                              : isUpscaled
-                                ? 'Already upscaled'
-                                : '4x Upscale'
-                          }
-                          className={`flex items-center justify-center w-10 h-10 rounded-xl transition-all ${
-                            isUpscaled
-                              ? 'text-orange-400 bg-orange-500/10'
-                              : 'text-white/70 hover:text-white hover:bg-white/10'
-                          } disabled:cursor-not-allowed`}
-                        >
-                          {isUpscaling ? (
-                            <Loader2 className="w-5 h-5 animate-spin text-orange-400" />
-                          ) : (
-                            <span className="text-xs font-bold">4x</span>
-                          )}
-                        </button>
-                        <div className="w-px h-5 bg-white/10" />
-                        {/* Blur Toggle */}
-                        <button
-                          type="button"
-                          onClick={() => setIsBlurred(!isBlurred)}
-                          title="Toggle Blur"
-                          className={`flex items-center justify-center w-10 h-10 rounded-xl transition-all ${
-                            isBlurred
-                              ? 'text-orange-400 bg-white/10'
-                              : 'text-white/70 hover:text-white hover:bg-white/10'
-                          }`}
-                        >
-                          {isBlurred ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
-                        </button>
-                        <div className="w-px h-5 bg-white/10" />
-                        {/* Download */}
-                        <button
-                          type="button"
-                          onClick={handleDownload}
-                          title="Download"
-                          className="flex items-center justify-center w-10 h-10 rounded-xl transition-all text-white/70 hover:text-white hover:bg-white/10"
-                        >
-                          <Download className="w-5 h-5" />
-                        </button>
-                        {/* Delete */}
-                        <button
-                          type="button"
-                          onClick={handleDelete}
-                          title="Delete"
-                          className="flex items-center justify-center w-10 h-10 rounded-xl transition-all text-white/70 hover:text-red-400 hover:bg-red-500/10"
-                        >
-                          <Trash2 className="w-5 h-5" />
-                        </button>
-                      </>
-                    )}
+                    {/* Info */}
+                    <button
+                      type="button"
+                      onClick={() => setShowInfo(!showInfo)}
+                      title="Details"
+                      className={`flex items-center justify-center w-10 h-10 rounded-xl transition-all ${
+                        showInfo
+                          ? 'bg-orange-600 text-white'
+                          : 'text-white/70 hover:text-white hover:bg-white/10'
+                      }`}
+                    >
+                      <Info className="w-5 h-5" />
+                    </button>
+                    <div className="w-px h-5 bg-white/10" />
+                    {/* Blur Toggle */}
+                    <button
+                      type="button"
+                      onClick={() => setIsBlurred(!isBlurred)}
+                      title="Toggle Blur"
+                      className={`flex items-center justify-center w-10 h-10 rounded-xl transition-all ${
+                        isBlurred
+                          ? 'text-orange-400 bg-white/10'
+                          : 'text-white/70 hover:text-white hover:bg-white/10'
+                      }`}
+                    >
+                      {isBlurred ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                    </button>
+                    <div className="w-px h-5 bg-white/10" />
+                    {/* Download */}
+                    <button
+                      type="button"
+                      onClick={handleDownload}
+                      title="Download"
+                      className="flex items-center justify-center w-10 h-10 rounded-xl transition-all text-white/70 hover:text-white hover:bg-white/10"
+                    >
+                      <Download className="w-5 h-5" />
+                    </button>
+                    {/* Delete */}
+                    <button
+                      type="button"
+                      onClick={handleDelete}
+                      title="Delete"
+                      className="flex items-center justify-center w-10 h-10 rounded-xl transition-all text-white/70 hover:text-red-400 hover:bg-red-500/10"
+                    >
+                      <Trash2 className="w-5 h-5" />
+                    </button>
                   </div>
                 </div>
 
                 {/* Info Panel */}
-                {showInfo && !isComparing && (
+                {showInfo && (
                   <div className="absolute top-3 left-3 right-3 p-3 rounded-xl bg-black/70 backdrop-blur-md border border-white/10 text-xs text-zinc-300 space-y-1">
                     <div>
                       <span className="text-zinc-500">Provider:</span> {imageDetails.provider}
@@ -286,7 +315,7 @@ export function ImageResultCard({
                     </div>
                     <div>
                       <span className="text-zinc-500">Upscaled:</span>{' '}
-                      {isUpscaled ? 'Yes (4x)' : 'No'}
+                      {isImageUpscaled ? 'Yes (4x)' : 'No'}
                     </div>
                   </div>
                 )}
@@ -318,44 +347,74 @@ export function ImageResultCard({
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[100] bg-black/90 backdrop-blur-sm flex items-center justify-center"
-            onClick={() => {
-              setIsFullscreen(false)
-              setScale(1)
-            }}
+            className="fixed inset-0 z-[100] bg-black/90 backdrop-blur-sm flex items-center justify-center overflow-hidden"
+            onClick={closeFullscreen}
+            onMouseUp={handleMouseUp}
+            onMouseLeave={handleMouseUp}
           >
             {/* Close button */}
             <button
               type="button"
-              onClick={() => {
-                setIsFullscreen(false)
-                setScale(1)
-              }}
+              onClick={closeFullscreen}
               className="absolute top-4 right-4 p-2 rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors z-10"
             >
               <X size={24} />
             </button>
 
-            {/* Image */}
-            <motion.div
-              initial={{ scale: 0.9, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.9, opacity: 0 }}
-              transition={{ duration: 0.2 }}
-              style={{
-                transform: `scale(${scale})`,
-              }}
-              onClick={(e) => e.stopPropagation()}
-            >
-              <img
-                src={currentImageUrl}
-                alt="Preview"
-                className={`max-w-[90vw] max-h-[80vh] object-contain rounded-lg shadow-2xl transition-all duration-300 ${
-                  isBlurred ? 'blur-xl' : ''
-                }`}
-                draggable={false}
-              />
-            </motion.div>
+            {/* Keyboard shortcuts hint */}
+            <div className="absolute top-4 left-4 text-xs text-white/40 space-y-1">
+              <div>Esc - Close</div>
+              <div>+/- - Zoom</div>
+              <div>0 - Reset</div>
+              <div>Scroll - Zoom</div>
+            </div>
+
+            {/* Image container with wheel zoom and drag */}
+            {isComparing && tempUpscaledUrl ? (
+              /* Fullscreen Comparison Mode */
+              <motion.div
+                initial={{ scale: 0.9, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.9, opacity: 0 }}
+                transition={{ duration: 0.2 }}
+                className="w-[90vw] h-[80vh] flex items-center justify-center"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <ImageComparison
+                  beforeImage={currentImageUrl}
+                  afterImage={tempUpscaledUrl}
+                  beforeLabel="Original"
+                  afterLabel="4x Upscaled"
+                  className="max-w-full max-h-full"
+                />
+              </motion.div>
+            ) : (
+              /* Normal fullscreen with zoom/pan */
+              <motion.div
+                ref={imageContainerRef}
+                initial={{ scale: 0.9, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.9, opacity: 0 }}
+                transition={{ duration: 0.2 }}
+                className={`${scale > 1 ? 'cursor-grab' : 'cursor-default'} ${isDragging ? 'cursor-grabbing' : ''}`}
+                style={{
+                  transform: `scale(${scale}) translate(${position.x / scale}px, ${position.y / scale}px)`,
+                }}
+                onClick={(e) => e.stopPropagation()}
+                onWheel={handleWheel}
+                onMouseDown={handleMouseDown}
+                onMouseMove={handleMouseMove}
+              >
+                <img
+                  src={currentImageUrl}
+                  alt="Preview"
+                  className={`max-w-[90vw] max-h-[80vh] object-contain rounded-lg shadow-2xl transition-[filter] duration-300 select-none ${
+                    isBlurred ? 'blur-xl' : ''
+                  }`}
+                  draggable={false}
+                />
+              </motion.div>
+            )}
 
             {/* Bottom toolbar */}
             <div
@@ -365,79 +424,133 @@ export function ImageResultCard({
               role="toolbar"
             >
               <div className="pointer-events-auto flex items-center gap-1 p-1.5 rounded-2xl bg-black/60 backdrop-blur-md border border-white/10 shadow-2xl">
-                {/* Info */}
-                <button
-                  type="button"
-                  onClick={() => setShowInfo(!showInfo)}
-                  title="Details"
-                  className={`flex items-center justify-center w-10 h-10 rounded-xl transition-all ${
-                    showInfo
-                      ? 'bg-orange-600 text-white'
-                      : 'text-white/70 hover:text-white hover:bg-white/10'
-                  }`}
-                >
-                  <Info className="w-5 h-5" />
-                </button>
-                <div className="w-px h-5 bg-white/10" />
+                {isComparing ? (
+                  /* Comparison mode toolbar */
+                  <>
+                    <button
+                      type="button"
+                      onClick={handleCancelComparison}
+                      title="Cancel (Esc)"
+                      className="flex items-center justify-center w-10 h-10 rounded-xl text-white/70 hover:text-white hover:bg-white/10 transition-all"
+                    >
+                      <X className="w-5 h-5" />
+                    </button>
+                    <div className="w-px h-5 bg-white/10" />
+                    <span className="px-3 text-xs text-white/60">Drag slider to compare</span>
+                    <div className="w-px h-5 bg-white/10" />
+                    <button
+                      type="button"
+                      onClick={handleConfirmUpscale}
+                      title="Apply upscaled image"
+                      className="flex items-center justify-center w-10 h-10 rounded-xl text-green-400 hover:text-green-300 hover:bg-green-500/10 transition-all"
+                    >
+                      <Check className="w-5 h-5" />
+                    </button>
+                  </>
+                ) : (
+                  /* Normal fullscreen toolbar */
+                  <>
+                    {/* Info */}
+                    <button
+                      type="button"
+                      onClick={() => setShowInfo(!showInfo)}
+                      title="Details"
+                      className={`flex items-center justify-center w-10 h-10 rounded-xl transition-all ${
+                        showInfo
+                          ? 'bg-orange-600 text-white'
+                          : 'text-white/70 hover:text-white hover:bg-white/10'
+                      }`}
+                    >
+                      <Info className="w-5 h-5" />
+                    </button>
+                    <div className="w-px h-5 bg-white/10" />
 
-                {/* Zoom controls */}
-                <button
-                  type="button"
-                  onClick={handleZoomOut}
-                  disabled={scale <= 1}
-                  title="Zoom out"
-                  className="flex items-center justify-center w-10 h-10 rounded-xl text-white/70 hover:text-white hover:bg-white/10 transition-all disabled:opacity-30 disabled:cursor-not-allowed"
-                >
-                  <ZoomOut className="w-5 h-5" />
-                </button>
-                <button
-                  type="button"
-                  onClick={handleResetZoom}
-                  title="Reset zoom"
-                  className="flex items-center justify-center px-2 h-10 rounded-xl text-white/70 hover:text-white hover:bg-white/10 transition-all text-xs font-medium min-w-[3rem]"
-                >
-                  {Math.round(scale * 100)}%
-                </button>
-                <button
-                  type="button"
-                  onClick={handleZoomIn}
-                  disabled={scale >= 8}
-                  title="Zoom in"
-                  className="flex items-center justify-center w-10 h-10 rounded-xl text-white/70 hover:text-white hover:bg-white/10 transition-all disabled:opacity-30 disabled:cursor-not-allowed"
-                >
-                  <ZoomIn className="w-5 h-5" />
-                </button>
-                <div className="w-px h-5 bg-white/10" />
+                    {/* Zoom controls */}
+                    <button
+                      type="button"
+                      onClick={handleZoomOut}
+                      disabled={scale <= 1}
+                      title="Zoom out (-)"
+                      className="flex items-center justify-center w-10 h-10 rounded-xl text-white/70 hover:text-white hover:bg-white/10 transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+                    >
+                      <ZoomOut className="w-5 h-5" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleResetZoom}
+                      title="Reset zoom (0)"
+                      className="flex items-center justify-center px-2 h-10 rounded-xl text-white/70 hover:text-white hover:bg-white/10 transition-all text-xs font-medium min-w-[3rem]"
+                    >
+                      {Math.round(scale * 100)}%
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleZoomIn}
+                      disabled={scale >= 8}
+                      title="Zoom in (+)"
+                      className="flex items-center justify-center w-10 h-10 rounded-xl text-white/70 hover:text-white hover:bg-white/10 transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+                    >
+                      <ZoomIn className="w-5 h-5" />
+                    </button>
+                    <div className="w-px h-5 bg-white/10" />
 
-                {/* Blur Toggle */}
-                <button
-                  type="button"
-                  onClick={() => setIsBlurred(!isBlurred)}
-                  title="Toggle Blur"
-                  className={`flex items-center justify-center w-10 h-10 rounded-xl transition-all ${
-                    isBlurred
-                      ? 'text-orange-400 bg-white/10'
-                      : 'text-white/70 hover:text-white hover:bg-white/10'
-                  }`}
-                >
-                  {isBlurred ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
-                </button>
-                <div className="w-px h-5 bg-white/10" />
+                    {/* 4x Upscale */}
+                    <button
+                      type="button"
+                      onClick={handleUpscaleWithCompare}
+                      disabled={isUpscaling || isImageUpscaled}
+                      title={
+                        isUpscaling
+                          ? 'Upscaling...'
+                          : isImageUpscaled
+                            ? 'Already upscaled'
+                            : '4x Upscale'
+                      }
+                      className={`flex items-center justify-center w-10 h-10 rounded-xl transition-all ${
+                        isImageUpscaled
+                          ? 'text-orange-400 bg-orange-500/10'
+                          : 'text-white/70 hover:text-white hover:bg-white/10'
+                      } disabled:cursor-not-allowed`}
+                    >
+                      {isUpscaling ? (
+                        <Loader2 className="w-5 h-5 animate-spin text-orange-400" />
+                      ) : (
+                        <span className="text-xs font-bold">4x</span>
+                      )}
+                    </button>
+                    <div className="w-px h-5 bg-white/10" />
 
-                {/* Download */}
-                <button
-                  type="button"
-                  onClick={handleDownload}
-                  title="Download"
-                  className="flex items-center justify-center w-10 h-10 rounded-xl text-white/70 hover:text-white hover:bg-white/10 transition-all"
-                >
-                  <Download className="w-5 h-5" />
-                </button>
+                    {/* Blur Toggle */}
+                    <button
+                      type="button"
+                      onClick={() => setIsBlurred(!isBlurred)}
+                      title="Toggle Blur"
+                      className={`flex items-center justify-center w-10 h-10 rounded-xl transition-all ${
+                        isBlurred
+                          ? 'text-orange-400 bg-white/10'
+                          : 'text-white/70 hover:text-white hover:bg-white/10'
+                      }`}
+                    >
+                      {isBlurred ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                    </button>
+                    <div className="w-px h-5 bg-white/10" />
+
+                    {/* Download */}
+                    <button
+                      type="button"
+                      onClick={handleDownload}
+                      title="Download"
+                      className="flex items-center justify-center w-10 h-10 rounded-xl text-white/70 hover:text-white hover:bg-white/10 transition-all"
+                    >
+                      <Download className="w-5 h-5" />
+                    </button>
+                  </>
+                )}
               </div>
             </div>
 
             {/* Info overlay in fullscreen */}
-            {showInfo && imageDetails && (
+            {showInfo && imageDetails && !isComparing && (
               <motion.div
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
@@ -467,7 +580,23 @@ export function ImageResultCard({
                 </div>
                 <div className="flex justify-between">
                   <span className="text-zinc-500">Upscaled</span>
-                  <span>{isUpscaled ? 'Yes (4x)' : 'No'}</span>
+                  <span>{isImageUpscaled ? 'Yes (4x)' : 'No'}</span>
+                </div>
+              </motion.div>
+            )}
+
+            {/* Upscaling loading overlay */}
+            {isUpscaling && (
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                className="absolute inset-0 bg-black/50 flex items-center justify-center z-20"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="flex flex-col items-center gap-4 p-6 rounded-2xl bg-zinc-900/90 border border-zinc-700">
+                  <Loader2 className="w-10 h-10 animate-spin text-orange-400" />
+                  <span className="text-white text-sm">Upscaling to 4x...</span>
                 </div>
               </motion.div>
             )}
